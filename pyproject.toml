@@ -3,13 +3,9 @@ name = "ggml-quants-py"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "μT", email = "37547640+mutichung@users.noreply.github.com" }
-]
+authors = [{ name = "Muti Chung", email = "mtchung037@gmail.com" }]
 requires-python = ">=3.10"
-dependencies = [
-    "torch>=2.0",
-]
+dependencies = ["numpy<2.0", "torch>=2.0"]
 
 [build-system]
 requires = ["hatchling"]
