@@ -25,6 +25,35 @@ class SuperBlockQ2K:
     qs: Tensor
     """Quantized values for the superblock. 2 bits per value. Integer tensor with shape (16, 16)."""
 
+    def dequantize(self) -> Tensor:
+        """Dequantize the superblock into a floating point tensor.
+
+        Returns:
+            Tensor: dequantized tensor in floating point.
+        """
+        d = self.d.to(dtype=torch.float32)
+        dmin = self.dmin.to(dtype=torch.float32)
+        scales = self.scales.to(dtype=torch.float32).view(-1, 1)
+        mins = self.mins.to(dtype=torch.float32).view(-1, 1)
+        qs = self.qs
+
+        dl = d * scales
+        ml = dmin * mins
+        y = dl * qs - ml
+        return y.reshape(-1)
+
+
+def dequantize_row_q2_K(x: list[SuperBlockQ2K]) -> Tensor:
+    """Dequantize a row of weights from Q2K format.
+
+    Args:
+        x (list[SuperBlockQ2K]): list of SuperBlockQ2K objects, each representing a superblock.
+
+    Returns:
+        Tensor: dequantized tensor in floating point.
+    """
+    return torch.cat([sb.dequantize() for sb in x], dim=0)
+
 
 def quantize_row_q2_K_impl(x: Tensor, quant_weights: Tensor) -> list[SuperBlockQ2K]:
     """Quantize a row of weights into Q2K format.
@@ -73,7 +102,7 @@ def quantize_row_q2_K_impl(x: Tensor, quant_weights: Tensor) -> list[SuperBlockQ
                 False,
             )
             scales.append(scale)
-            mins.append(m.item())
+            mins.append(m)
             qx_sb.append(qx)
 
         scales = torch.stack(scales, dim=0)
@@ -159,7 +188,7 @@ def make_qp_quants(
         slx = sumlx - quant_weights * x * quantized_x
         sl2 = suml2 - quant_weights * quantized_x.square()
         new_quants = torch.round(x * sl2 / slx).clamp(min=0, max=nmax).int()
-        mask = not (slx > 0 and sl2 > 0.0)
+        mask = (slx > 0).logical_and(sl2 > 0.0).logical_not()
         new_quants[mask] = quantized_x[mask]
         mask = new_quants != quantized_x
         slx = slx + quant_weights * x * new_quants
@@ -207,7 +236,7 @@ def make_qkx3_quants(
     if quant_weights is None:
         quant_weights = x.square()
     sum_w = quant_weights.sum()
-    sum_x = sum_w * x
+    sum_x = (quant_weights * x).sum()
 
     if xmax.item() < xmin.item():
         return torch.zeros(()), torch.zeros_like(x, dtype=torch.int), -xmin
