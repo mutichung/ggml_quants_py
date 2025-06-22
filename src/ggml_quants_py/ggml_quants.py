@@ -1,8 +1,8 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torch import Tensor
-
 
 QK_K = 256  # TODO: check value; maybe make configurable?
 """Elements per superblock."""
@@ -10,6 +10,8 @@ NUMEL_PER_BLOCK = 16
 """16"""
 BLOCKS_PER_SUPER_BLOCK = QK_K // NUMEL_PER_BLOCK
 """QK_K / 16"""
+
+GROUP_MAX_EPS = 1e-15
 
 
 @dataclass
@@ -275,3 +277,83 @@ def make_qkx3_quants(
                 xmin = this_min
 
     return scale, quantized_x, -xmin
+
+
+def make_qx_quants(
+    nmax: int, x: Tensor, rmse_type: int, qw: Optional[Tensor] = None
+) -> tuple[Tensor, Tensor]:
+    """Symmetric quantization of vector x into log_2(2 * nmax) bits.
+
+    Args:
+        nmax (int): maximum absolute value for quantization.
+        x (Tensor): input tensor in floating point.
+        rmse_type (int): type of error metric.
+        qw (Optional[Tensor], optional): quantization weights. Defaults to None.
+
+    Returns:
+        tuple[Tensor, Tensor]:
+            - Scale (Tensor): scaling factor for the quantized values. Scalar, FP32.
+            - quantized_x (Tensor): unsigned integer vector with range [0, 2 * nmax - 1].
+    """
+    assert x.ndim == 1
+    max_idx = x.abs().argmax()
+    xmax = x[max_idx]
+    amax = xmax.abs()
+
+    if amax.item() < GROUP_MAX_EPS:
+        return torch.zeros(()), torch.zeros_like(x, dtype=torch.int)
+
+    inv_scale = -nmax / xmax
+    if rmse_type == 0:
+        quantized_x = torch.round(x * inv_scale).clamp(min=-nmax, max=nmax - 1).int()
+        return 1.0 / inv_scale, quantized_x
+
+    return_early = False
+    if rmse_type < 0:
+        rmse_type = -rmse_type
+        return_early = True
+
+    qx_sym = torch.round(x * inv_scale).clamp(min=-nmax, max=nmax - 1).int()
+    quantized_x = qx_sym + nmax
+
+    def get_quant_weight(qw: Tensor | None, rmse_type: int) -> Tensor:
+        if qw is not None:
+            return qw
+        if rmse_type == 1:
+            return x.square()
+        if rmse_type == 2:
+            return torch.ones_like(x)
+        if rmse_type == 3:
+            return x.abs()
+        return x.abs().sqrt()
+
+    w = get_quant_weight(qw, rmse_type)
+    sumlx = (w * x * qx_sym).sum()
+    suml2 = (w * qx_sym.square()).sum()
+    if suml2 > 0:
+        scale = sumlx / suml2
+    else:
+        scale = torch.zeros(())
+
+    if return_early:
+        if suml2 > 0:
+            return 0.5 * (scale + 1 / inv_scale), quantized_x
+        else:
+            return 1 / inv_scale, quantized_x
+
+    best = scale * sumlx
+    for dscale in range(-9, 10):
+        if dscale == 0:
+            continue
+        inv_scale = -(nmax + 0.1 * dscale) / xmax
+        qx_sym = torch.round(inv_scale * x).clamp(min=-nmax, max=nmax - 1)
+        w = get_quant_weight(qw, rmse_type)
+        sumlx = (w * x * qx_sym).sum()
+        suml2 = (w * qx_sym * qx_sym).sum()
+        if suml2 > 0 and sumlx.square() > best * suml2:
+            qx_sym = torch.round(inv_scale * x).clamp(min=-nmax, max=nmax - 1)
+            quantized_x = qx_sym + nmax
+            scale = sumlx / suml2
+            best = scale * sumlx
+
+    return scale, quantized_x
