@@ -136,6 +136,20 @@ def quantize_row_q2_K_impl(x: Tensor, quant_weights: Tensor) -> list[SuperBlockQ
     return y
 
 
+def quantize_q2_K(
+    src: Tensor, quant_weights: Optional[Tensor] = None
+) -> list[list[SuperBlockQ2K]]:
+    assert src.ndim == 2
+    if quant_weights is None:
+        return quantize_row_q2_K_ref(src)  # TODO
+    else:
+        return [quantize_row_q2_K_impl(x, qw) for x, qw in zip(src, quant_weights)]
+
+
+def dequantize_q2_K(src: list[list[SuperBlockQ2K]]) -> Tensor:
+    return torch.stack([dequantize_row_q2_K(x) for x in src])
+
+
 def make_qp_quants(
     nmax: int, x: Tensor, quant_weights: Tensor
 ) -> tuple[Tensor, Tensor]:
