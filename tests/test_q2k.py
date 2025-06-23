@@ -3,7 +3,18 @@ import torch
 from ggml_quants_py import ggml_quants
 
 
-def test_quantize_row_q2k():
+def test_quantize_row_q2k_ref():
+    x = torch.randn((1024,))
+    qx = ggml_quants.quantize_row_q2_K_ref(x)
+    dq_x = ggml_quants.dequantize_row_q2_K(qx)
+    assert dq_x.shape == x.shape
+    dq_x = dq_x.reshape(-1, 16)
+    x = x.reshape(-1, 16)
+    for x_block, block in zip(x, dq_x):
+        assert torch.unique(block).numel() <= 4, "Block should be quantized to 2 bits."
+
+
+def test_quantize_row_q2k_impl():
     x = torch.randn((1024,))
     qx = ggml_quants.quantize_row_q2_K_impl(x, torch.ones_like(x))
     dq_x = ggml_quants.dequantize_row_q2_K(qx)

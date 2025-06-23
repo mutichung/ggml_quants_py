@@ -69,7 +69,7 @@ def quantize_row_q2_K_ref(x: Tensor) -> list[SuperBlockQ2K]:
         scales, mins, qx_sb = [], [], []
         for x_block in x_sb:
             weights = x_block.abs()
-            scale, min, qx = make_qkx2_quants(3, x_block, weights, -0.5, -0.1, 15, True)
+            scale, qx, min = make_qkx2_quants(3, x_block, weights, -0.5, -0.1, 15, True)
             scales.append(scale)
             mins.append(min)
             qx_sb.append(qx)
