@@ -4,8 +4,8 @@ from typing import Optional
 import torch
 from torch import Tensor
 
-QK_K = 256  # TODO: check value; maybe make configurable?
-"""Elements per superblock."""
+from . import QK_K
+
 NUMEL_PER_BLOCK = 16
 """16"""
 BLOCKS_PER_SUPER_BLOCK = QK_K // NUMEL_PER_BLOCK
