@@ -16,6 +16,13 @@ def test_quantize_row_q2k():
 
 def test_quantize_q2k():
     x = torch.randn((4, 1024))
+    qx = ggml_quants.quantize_q2_K(x)
+    assert x.size(0) == len(qx)
+    assert x.size(1) // ggml_quants.QK_K == len(qx[0])
+
+
+def test_quantize_q2k_with_weights():
+    x = torch.randn((4, 1024))
     qx = ggml_quants.quantize_q2_K(x, torch.ones_like(x))
     assert x.size(0) == len(qx)
     assert x.size(1) // ggml_quants.QK_K == len(qx[0])
