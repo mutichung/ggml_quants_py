@@ -57,6 +57,66 @@ def dequantize_row_q2_K(x: list[SuperBlockQ2K]) -> Tensor:
     return torch.cat([sb.dequantize() for sb in x], dim=0)
 
 
+def quantize_row_q2_K_ref(x: Tensor) -> list[SuperBlockQ2K]:
+    assert x.ndim == 1
+    assert x.numel() % QK_K == 0
+
+    q4scale = torch.tensor(15.0)
+    y: list[SuperBlockQ2K] = []
+
+    x = x.reshape(-1, BLOCKS_PER_SUPER_BLOCK, NUMEL_PER_BLOCK)
+    for x_sb in x:
+        scales, mins, qx_sb = [], [], []
+        for x_block in x_sb:
+            weights = x_block.abs()
+            scale, min, qx = make_qkx2_quants(
+                16, 3, x_block, weights, -0.5, -0.1, 15, True
+            )  # TODO
+            scales.append(scale)
+            mins.append(min)
+            qx_sb.append(qx)
+
+        scales = torch.stack(scales, dim=0)
+        mins = torch.stack(mins, dim=0)
+        qx_sb = torch.stack(qx_sb, dim=0)
+
+        # TODO: what's the difference between this and `make_qp_quants`?
+        max_scale = scales.max()
+        max_min = mins.max()
+        if max_scale.item() > 0.0:
+            inv_scale = q4scale / max_scale
+            scales = torch.round(scales * inv_scale).int()
+            mins = torch.round(mins * inv_scale).int()
+            d = (max_scale / q4scale).half()
+        else:
+            scales = torch.zeros_like(scales, dtype=torch.int)
+            d = torch.zeros((), dtype=torch.float16)
+
+        if max_min.item() > 0.0:
+            inv_scale = q4scale / max_min
+            mins = torch.round(mins * inv_scale).int()
+            dmin = (max_min / q4scale).half()
+        else:
+            mins = torch.zeros_like(mins, dtype=torch.int)
+            dmin = torch.zeros((), dtype=torch.float16)
+
+        dq_scales = (d * scales).float()
+        dq_mins = (dmin * mins).float()
+        qx_sb = torch.round((x_sb + dq_mins) / dq_scales).clamp(min=0, max=3).int()
+
+        y.append(
+            SuperBlockQ2K(
+                d=d,
+                dmin=dmin,
+                scales=scales,
+                mins=mins,
+                qs=qx_sb,
+            )
+        )
+
+    return y
+
+
 def quantize_row_q2_K_impl(x: Tensor, quant_weights: Tensor) -> list[SuperBlockQ2K]:
     """Quantize a row of weights into Q2K format.
 
@@ -141,7 +201,7 @@ def quantize_q2_K(
 ) -> list[list[SuperBlockQ2K]]:
     assert src.ndim == 2
     if quant_weights is None:
-        return quantize_row_q2_K_ref(src)  # TODO
+        return [quantize_row_q2_K_ref(x) for x in src]
     else:
         return [quantize_row_q2_K_impl(x, qw) for x, qw in zip(src, quant_weights)]
 
