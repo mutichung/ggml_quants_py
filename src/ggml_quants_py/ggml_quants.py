@@ -280,10 +280,10 @@ def make_qp_quants(
     return sumlx / suml2, quantized_x
 
 
-def make_qkx3_quants(
+def make_qkx2_quants(
     nmax: int,
-    x: Tensor,  # FloatTensor,
-    quant_weights: Tensor | None,  # FloatTensor,
+    x: Tensor,
+    quant_weights: Tensor,
     rmin: float,
     rdelta: float,
     nstep: int,
@@ -294,7 +294,7 @@ def make_qkx3_quants(
     Args:
         nmax (int): maximum value for quantization.
         x (Tensor): input tensor in floating point.
-        quant_weights (Tensor | None): weights for quantization in floating point, if None, use square of x.
+        quant_weights (Tensor): weights for quantization in floating point.
         rmin (float):
         rdelta (float):
         nstep (int): number of steps for further optimization.
@@ -307,14 +307,12 @@ def make_qkx3_quants(
             - xmin (Tensor): minimum value subtracted from x before quantization. Scalar, floating point.
     """
     assert x.ndim == 1
-    xmin = x.min().clamp(max=0)
+    xmin = x.min().clamp(max=0.0)
     xmax = x.max()
-    if quant_weights is None:
-        quant_weights = x.square()
     sum_w = quant_weights.sum()
     sum_x = (quant_weights * x).sum()
 
-    if xmax.item() < xmin.item():
+    if xmax.item() == xmin.item():
         return torch.zeros(()), torch.zeros_like(x, dtype=torch.int), -xmin
 
     inv_scale = nmax / (xmax - xmin)
@@ -351,6 +349,20 @@ def make_qkx3_quants(
                 xmin = this_min
 
     return scale, quantized_x, -xmin
+
+
+def make_qkx3_quants(
+    nmax: int,
+    x: Tensor,
+    quant_weights: Tensor | None,
+    rmin: float,
+    rdelta: float,
+    nstep: int,
+    use_mad: bool,
+) -> tuple[Tensor, Tensor, Tensor]:
+    if quant_weights is None:
+        quant_weights = x.square()
+    return make_qkx2_quants(nmax, x, quant_weights, rmin, rdelta, nstep, use_mad)
 
 
 def make_qx_quants(
