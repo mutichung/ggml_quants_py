@@ -4,8 +4,7 @@ from typing import Optional
 import torch
 from torch import Tensor
 
-from . import QK_K
-from .ggml_quants import make_qkx2_quants, make_qkx3_quants, make_qp_quants
+from . import QK_K, make_quants
 
 
 NUMEL_PER_BLOCK = 32
@@ -53,7 +52,7 @@ def quantize_row_q4_K_ref(x: Tensor):
         weights = av_x.view(-1, 1) + x_sb.abs()  # (8, 32)
         scales, mins, qx_sb = [], [], []
         for x_block in x_sb:
-            scale, qx, min = make_qkx2_quants(
+            scale, qx, min = make_quants.make_qkx2_quants(
                 15, x_block, weights, -1.0, 0.1, 20, False
             )
             scales.append(scale)
@@ -123,7 +122,7 @@ def quantize_row_q4_K_impl(
         sw = weights.sum(dim=-1)  # (8,)
         scales, mins, qx_sb = [], [], []
         for x_block, qw_block in zip(x_sb, weights):
-            scale, qx, min = make_qkx3_quants(
+            scale, qx, min = make_quants.make_qkx3_quants(
                 15, x_block, qw_block, -0.9, 0.05, 36, False
             )
             scales.append(scale)
@@ -134,8 +133,8 @@ def quantize_row_q4_K_impl(
         mins = torch.stack(mins, dim=0)
         qx_sb = torch.stack(qx_sb, dim=0)
 
-        d_block, scales = make_qp_quants(63, scales, sw)
-        m_block, mins = make_qp_quants(63, mins, sw)
+        d_block, scales = make_quants.make_qp_quants(63, scales, sw)
+        m_block, mins = make_quants.make_qp_quants(63, mins, sw)
 
         y.append(
             SuperBlockQ4K(
