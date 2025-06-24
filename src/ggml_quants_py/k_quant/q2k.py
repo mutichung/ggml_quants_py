@@ -6,10 +6,11 @@ from torch import Tensor
 
 from . import QK_K, make_quants
 
+
 NUMEL_PER_BLOCK = 16
-"""16"""
+"""Elements per block."""
 BLOCKS_PER_SUPER_BLOCK = QK_K // NUMEL_PER_BLOCK
-"""QK_K / 16"""
+"""Blocks per superblock. QK_K / 16"""
 
 
 @dataclass
@@ -147,13 +148,7 @@ def quantize_row_q2_K_impl(x: Tensor, quant_weights: Tensor) -> list[SuperBlockQ
         scales, mins, qx_sb = [], [], []
         for x_block, qw_block in zip(x_sb, qw_sb):
             scale, qx, m = make_quants.make_qkx3_quants(
-                3,
-                x_block,
-                qw_block,
-                -0.9,
-                0.05,
-                36,
-                False,
+                3, x_block, qw_block, -0.9, 0.05, 36, False
             )
             scales.append(scale)
             mins.append(m)
@@ -171,8 +166,8 @@ def quantize_row_q2_K_impl(x: Tensor, quant_weights: Tensor) -> list[SuperBlockQ
         )
 
         curr_y = SuperBlockQ2K(
-            d=scale_sb.to(dtype=torch.float16),
-            dmin=min_sb.to(dtype=torch.float16),
+            d=scale_sb.half(),
+            dmin=min_sb.half(),
             scales=q_scales,
             mins=q_mins,
             qs=qx_sb,

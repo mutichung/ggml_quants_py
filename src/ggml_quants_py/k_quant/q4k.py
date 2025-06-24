@@ -29,6 +29,11 @@ class SuperBlockQ4K:
     """Quantized values for the superblock. 4 bits per value. Integer tensor with shape (8, 32)."""
 
     def dequantize(self) -> Tensor:
+        """Dequantize the superblock into a floating point tensor.
+
+        Returns:
+            Tensor: dequantized tensor in floating point.
+        """
         return (
             self.d.float() * self.scales.view(-1, 1) * self.qs
             - self.dmin.float() * self.mins.view(-1, 1)
@@ -36,13 +41,22 @@ class SuperBlockQ4K:
 
 
 def dequantize_row_q4_K(x: list[SuperBlockQ4K]) -> Tensor:
+    """Dequantize a row of weights from Q4K format.
+
+    Args:
+        x (list[SuperBlockQ4K]): list of SuperBlockQ4K objects, each representing a superblock.
+
+    Returns:
+        Tensor: dequantized tensor in floating point.
+    """
     return torch.cat([sb.dequantize() for sb in x], dim=0)
 
 
-def quantize_row_q4_K_ref(x: Tensor):
+def quantize_row_q4_K_ref(x: Tensor) -> list[SuperBlockQ4K]:
     assert x.ndim == 1
     assert x.numel() % QK_K == 0
 
+    q6scale = torch.tensor(63.0)
     y: list[SuperBlockQ4K] = []
 
     x = x.reshape(-1, BLOCKS_PER_SUPER_BLOCK, NUMEL_PER_BLOCK)
@@ -66,12 +80,12 @@ def quantize_row_q4_K_ref(x: Tensor):
         inv_scale = torch.zeros(())
         inv_min = torch.zeros(())
         if scales.max().item() > 0.0:
-            inv_scale = 63.0 / scales.max()
+            inv_scale = q6scale / scales.max()
         if mins.max().item() > 0.0:
-            inv_min = 63.0 / mins.max()
+            inv_min = q6scale / mins.max()
 
-        d = (scales.max() / 63.0).half()
-        dmin = (mins.max() / 63.0).half()
+        d = (scales.max() / q6scale).half()
+        dmin = (mins.max() / q6scale).half()
         scales = (scales * inv_scale).round().clamp(max=63).int()
         mins = (mins * inv_min).round().clamp(max=63).int()
         qx_sb = (
@@ -119,32 +133,32 @@ def quantize_row_q4_K_impl(
         else:
             weights = sigma2.sqrt() + x_sb.abs()
 
-        sw = weights.sum(dim=-1)  # (8,)
+        weight_sums = weights.sum(dim=-1)  # (8,)
         scales, mins, qx_sb = [], [], []
         for x_block, qw_block in zip(x_sb, weights):
-            scale, qx, min = make_quants.make_qkx3_quants(
+            scale, qx, m = make_quants.make_qkx3_quants(
                 15, x_block, qw_block, -0.9, 0.05, 36, False
             )
             scales.append(scale)
-            mins.append(min)
+            mins.append(m)
             qx_sb.append(qx)
 
         scales = torch.stack(scales, dim=0)
         mins = torch.stack(mins, dim=0)
         qx_sb = torch.stack(qx_sb, dim=0)
 
-        d_block, scales = make_quants.make_qp_quants(63, scales, sw)
-        m_block, mins = make_quants.make_qp_quants(63, mins, sw)
+        scale_sb, q_scales = make_quants.make_qp_quants(63, scales, weight_sums)
+        min_sb, q_mins = make_quants.make_qp_quants(63, mins, weight_sums)
 
         y.append(
             SuperBlockQ4K(
-                d=d_block.half(),
-                dmin=m_block.half(),
-                scales=scales,
-                mins=mins,
+                d=scale_sb.half(),
+                dmin=min_sb.half(),
+                scales=q_scales,
+                mins=q_mins,
                 qs=torch.round(
-                    (x_sb + m_block.float() * mins.view(-1, 1))
-                    / (d_block.float() * scales.view(-1, 1))
+                    (x_sb + min_sb.float() * q_mins.view(-1, 1))
+                    / (scale_sb.float() * q_scales.view(-1, 1))
                 ),
             )
         )
