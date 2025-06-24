@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torch import Tensor
@@ -22,6 +23,16 @@ class SuperBlockQ4K:
     scales: Tensor
     mins: Tensor
     qs: Tensor
+
+    def dequantize(self) -> Tensor:
+        return (
+            self.d.float() * self.scales.view(-1, 1) * self.qs
+            - self.dmin.float() * self.mins.view(-1, 1)
+        ).reshape(-1)
+
+
+def dequantize_row_q4_K(x: list[SuperBlockQ4K]) -> Tensor:
+    return torch.cat([sb.dequantize() for sb in x], dim=0)
 
 
 def quantize_row_q4_K_ref(x: Tensor):
@@ -75,3 +86,13 @@ def quantize_row_q4_K_ref(x: Tensor):
         )
 
     return y
+
+
+def quantize_q4_K(
+    src: Tensor, quant_weights: Optional[Tensor] = None
+) -> list[list[SuperBlockQ4K]]:
+    assert src.ndim == 2
+    if quant_weights is None:
+        return [quantize_row_q4_K_ref(x) for x in src]
+    else:
+        return [quantize_row_q4_K_impl(x, qw) for x, qw in zip(src, quant_weights)]  # TODO
