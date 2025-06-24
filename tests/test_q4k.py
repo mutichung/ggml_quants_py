@@ -1,6 +1,6 @@
 import torch
 
-from ggml_quants_py import q4k, QK_K
+from ggml_quants_py.k_quant import QK_K, q4k
 
 
 def test_quantize_row_q4k_ref():
