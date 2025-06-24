@@ -50,7 +50,7 @@ def quantize_row_q4_K_ref(x: Tensor):
     for x_sb in x:
         sum_x2 = x_sb.square().sum(dim=-1)  # (8,)
         av_x = (sum_x2 / NUMEL_PER_BLOCK).sqrt()  # (8,)
-        weights = av_x + x_sb.abs()  # (8, 32)
+        weights = av_x.view(-1, 1) + x_sb.abs()  # (8, 32)
         scales, mins, qx_sb = [], [], []
         for x_block in x_sb:
             scale, qx, min = make_qkx2_quants(
@@ -71,12 +71,15 @@ def quantize_row_q4_K_ref(x: Tensor):
         if mins.max().item() > 0.0:
             inv_min = 63.0 / mins.max()
 
-        scales = (scales * inv_scale).round().clamp(max=63)
-        mins = (mins * inv_min).round().clamp(max=63)
         d = (scales.max() / 63.0).half()
         dmin = (mins.max() / 63.0).half()
+        scales = (scales * inv_scale).round().clamp(max=63).int()
+        mins = (mins * inv_min).round().clamp(max=63).int()
         qx_sb = (
-            torch.round((x_sb + dmin.float() * mins) / (d.float() * scales))
+            torch.round(
+                (x_sb + dmin.float() * mins.view(-1, 1))
+                / (d.float() * scales.view(-1, 1))
+            )
             .clamp(min=0, max=15)
             .int()
         )
@@ -141,7 +144,8 @@ def quantize_row_q4_K_impl(
                 scales=scales,
                 mins=mins,
                 qs=torch.round(
-                    (x_sb + m_block.float() * mins) / (d_block.float() * scales)
+                    (x_sb + m_block.float() * mins.view(-1, 1))
+                    / (d_block.float() * scales.view(-1, 1))
                 ),
             )
         )
@@ -156,6 +160,8 @@ def quantize_q4_K(
     if quant_weights is None:
         return [quantize_row_q4_K_ref(x) for x in src]
     else:
-        return [
-            quantize_row_q4_K_impl(x, qw) for x, qw in zip(src, quant_weights)
-        ]
+        return [quantize_row_q4_K_impl(x, qw) for x, qw in zip(src, quant_weights)]
+
+
+def dequantize_q4_K(src: list[list[SuperBlockQ4K]]) -> Tensor:
+    return torch.stack([dequantize_row_q4_K(x) for x in src])
