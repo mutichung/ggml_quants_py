@@ -33,16 +33,10 @@ class SuperBlockQ2K:
         Returns:
             Tensor: dequantized tensor in floating point.
         """
-        d = self.d.to(dtype=torch.float32)
-        dmin = self.dmin.to(dtype=torch.float32)
-        scales = self.scales.to(dtype=torch.float32).view(-1, 1)
-        mins = self.mins.to(dtype=torch.float32).view(-1, 1)
-        qs = self.qs
-
-        dl = d * scales
-        ml = dmin * mins
-        y = dl * qs - ml
-        return y.reshape(-1)
+        return (
+            self.d.float() * self.scales.view(-1, 1) * self.qs
+            - self.dmin.float() * self.mins.view(-1, 1)
+        ).reshape(-1)
 
 
 def dequantize_row_q2_K(x: list[SuperBlockQ2K]) -> Tensor:
